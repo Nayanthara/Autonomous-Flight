@@ -1,0 +1,180 @@
+Flying Car and Autonomous Flight Engineer Nanodegree
+Project 3 – Building a Controller
+
+OBJECTIVE : Build a controller in C++ to fly a quadcopter in 3D. The controller must satisfy the passing conditions for each of the following scenarios. 
+1.	Scenario 1 – Estimate mass of quadrotor
+2.	Scenario 2 – Implement body rate and roll/pitch control
+3.	Scenario 3 – Implement position/velocity and yaw angle control
+4.	Scenario 4 – Tune for non-idealities and robustness 
+5.	Scenario 5 – Tune for tracking trajectories
+
+IMPLEMENTATION: The solution implementation at https://github.com/udacity/FCND-Controls/blob/solution/controller.py was used as a reference. 
+
+Scenario 1 – Estimate mass of quadrotor
+
+The mass of the quadrotor was estimated to be 0.4875
+
+Scenario 2 – Implement body rate and roll/pitch control
+
+The code below converts 3 axis moments and a collective thrust into individual motor thrust commands. Note that L is the distance from center to motors and that the ordering of last two motors is different from those in the lesson.
+The knowledge article https://knowledge.udacity.com/questions/156485 was highly useful to understand the difference in parameters from those in the lesson.
+ 
+  float l = L / sqrtf(2.f);
+  float c_bar = collThrustCmd;
+  float p_bar =  momentCmd.x / l; // x axis
+  float q_bar =  momentCmd.y / l; // y axis 
+  float r_bar = -momentCmd.z / kappa; // z axis
+
+  cmd.desiredThrustsN[0] = CONSTRAIN((c_bar + p_bar + q_bar + r_bar)/4.f, minMotorThrust, maxMotorThrust) ; // front left
+  cmd.desiredThrustsN[1] = CONSTRAIN((c_bar - p_bar + q_bar - r_bar)/4.f, minMotorThrust, maxMotorThrust) ; // front right
+  cmd.desiredThrustsN[2] = CONSTRAIN((c_bar + p_bar - r_bar - q_bar)/4.f, minMotorThrust, maxMotorThrust) ; // rear left
+  cmd.desiredThrustsN[3] = CONSTRAIN((c_bar - p_bar - q_bar + r_bar)/4.f, minMotorThrust, maxMotorThrust) ; // rear right
+
+
+Body rate control
+ 
+  V3F I {Ixx, Iyy, Izz};
+  V3F pqrError = pqrCmd - pqr;
+  momentCmd = I * kpPQR * pqrError;
+
+
+The proportional controller for body rate sets the commanded moment to be proportional to the product of moment of inertia and corresponding error in body rate. The gain parameter is kpPQR.
+At this point kpPQR is tuned to bring roll rate to 0 in 0.055 seconds. The value is 90, 90, 10. The vehicle will keep flying off quite quickly since the angle is not yet being controlled back to 0. Also note that there is up to a 10-degree overshoot.
+ 
+
+Roll/pitch control
+
+  float acc = -(collThrustCmd/mass);
+
+  // Target roll and pitch rates
+  float roll_rate_traget = accelCmd.x/acc; 
+  float pitch_rate_target = accelCmd.y/acc;
+        
+  // Actual roll and pitch rates
+  const float roll_rate_actual = R(0,2);
+  const float pitch_rate_actual = R(1,2);
+
+  // Errors
+  const float roll_rate_error = roll_rate_traget - roll_rate_actual;
+  const float pitch_rate_error = pitch_rate_target - pitch_rate_actual;
+
+  // P controller for roll and pitch rates
+  const float roll_rate = kpBank * roll_rate_error;
+  const float pitch_rate = kpBank * pitch_rate_error;
+
+ // Convert rates to body frame 
+  pqrCmd.x = (R(1, 0) * roll_rate - R(0, 0) * pitch_rate) / R(2, 2);
+  pqrCmd.y = (R(1, 1) * roll_rate - R(0, 1) * pitch_rate) / R(2, 2);
+  pqrCmd.z = 0.f;
+
+
+The roll/pitch controller uses proportional control to set roll and pitch rates. The target roll and pitch rates are computed from the corresponding components of target lateral acceleration dividing it by the magnitude of acceleration calculated from the collective thrust command. 
+At this point kpBank is tuned and kpPQR is re-tuned to control the roll angle to 0 in addition to controlling the roll rate. The values were kpBank = 15 and kpPQR = 95,95,11. The quadrotor levels itself but still flies away slowly because velocity/position is not being controlled.
+ 
+
+Scenario 3 – Implement position/velocity and yaw angle control
+
+Lateral position control
+  // Update and limit desired velocity
+  velCmd += kpPosXY * (posCmd - pos);
+  velCmd.x = CONSTRAIN(velCmd.x, -maxSpeedXY, maxSpeedXY);
+  velCmd.y = CONSTRAIN(velCmd.y, -maxSpeedXY, maxSpeedXY);
+
+  // Update and limit desired acceleration
+  // Note 1: updated velCmd is used to calculte error
+  // Note 2: accelCmd is initialized with accelCmdFF
+  accelCmd += kpVelXY * (velCmd - vel);
+  accelCmd.x = CONSTRAIN(accelCmd.x, -maxAccelXY, maxAccelXY);
+  accelCmd.y = CONSTRAIN(accelCmd.y, -maxAccelXY, maxAccelXY);
+
+Altitude control
+
+  velZCmd += kpPosZ * (posZCmd - posZ);
+  velZCmd = CONSTRAIN(velZCmd, -maxDescentRate, maxAscentRate);
+  accelZCmd += kpVelZ * (velZCmd - velZ);
+
+  thrust = -mass * (accelZCmd - 9.81) / R(2,2);
+  thrust = CONSTRAIN(thrust, minMotorThrust*4, maxMotorThrust*4) ;
+
+The altitude control is first implemented as PD controller (later updated to PID for Scenario 4 ).
+At this point kpPosXY, kpPosZ, kpVelXY and kpVelZ are tuned such that the quads move to their destination points and tracking error goes down. However, one quad remains rotated in yaw because yaw control has not yet been implemented. The values of gains were 2.4 for kpPosXY and kpPosZ, and 6.5 for kpVelXY and kpVelZ.
+ 
+
+Yaw control
+
+  float yaw_err = yawCmd - yaw;
+  while (yaw_err > M_PI) {
+        yaw_err -= 2*M_PI;
+    }
+  while (yaw_err < -M_PI) {
+        yaw_err += 2*M_PI;
+  }
+  yawRateCmd = kpYaw * yaw_err;
+
+
+A proportional controller is implemented for yaw control. It also takes care of wrapping the yaw angle error to within -pi to pi.
+At this point kpYaw is tuned and the z component of kpPQR is re-tuned to control yaw error to 0. The new values are kpYaw = 3, KpPQR remains at 95,95,11.
+ 
+
+Scenario 4 – Tune for non-idealities and robustness 
+In the first step of tuning, all except the drone with a higher mass satisfied the conditions. The parameters were as shown in figure below.
+ 
+
+Updated altitude control
+
+  velZCmd += kpPosZ * (posZCmd - posZ);
+  velZCmd = CONSTRAIN(velZCmd, -maxDescentRate, maxAscentRate);
+  accelZCmd += kpVelZ * (velZCmd - velZ);
+
+  // Added for Scenario 4 - Nonlinearities - Begin
+  integratedAltitudeError += (posZCmd - posZ) * dt;
+  accelZCmd += KiPosZ * integratedAltitudeError;
+  // Added for Scenario 4 - Nonlinearities - End
+
+  thrust = -mass * (accelZCmd - 9.81) / R(2,2);
+  thrust = CONSTRAIN(thrust, minMotorThrust*4, maxMotorThrust*4) ;
+
+
+An integral component was introduced into the altitude control in order to improve its performance with non-ideal drone parameters such as different-mass vehicle. The parameters including kiPosZ were re-tuned.
+ 
+
+Scenario 5 – Tune for tracking trajectories
+The performance of the controller on the orange quad was reasonably good but the gain parameters were adjusted slightly to satisfy the requirements of scenario 5. The final values of parameters were as shown below:
+ 
+# Physical properties
+Mass = 0.4875
+L = 0.17
+Ixx = 0.0023
+Iyy = 0.0023
+Izz = 0.0046
+kappa = 0.016
+minMotorThrust = .1
+maxMotorThrust = 4.5
+
+# Position control gains
+kpPosXY = 2.6
+kpPosZ = 2.6
+KiPosZ = 40
+
+# Velocity control gains
+kpVelXY = 10
+kpVelZ = 10
+
+# Angle control gains
+kpBank = 9
+kpYaw = 3
+
+# Angle rate gains
+kpPQR = 90, 90, 10
+To get better performance for the red quad, the trajectory file was updated to include target velocity information. The updated code is MakePeriodicTrajectory.py is given below
+
+
+vx = (x-px)/timestep;
+vy = (y-py)/timestep;
+vz = (z-pz)/timestep;
+the_file.write("," + fmt(vx) + "," + fmt(vy) + "," + fmt(vz));
+px = x;
+py = y;
+pz = z;
+
+Link to simulation video : https://youtu.be/J5EcC2slY0I 

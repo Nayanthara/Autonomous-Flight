@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(CPPSim)
+project(CPPEstSim)
 
 set(CMAKE_CXX_STANDARD 11)
 #set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -std=c++0x")
@@ -40,12 +40,12 @@ include_directories(${OPENGL_INCLUDE_DIR})
 #find_package(GL REQUIRED)
 #find_package(pthread REQUIRED)
 
-add_executable(CPPSim
+add_executable(CPPEstSim
         ${SOURCES}
         ${HEADERS}
         )
 
-target_link_libraries(CPPSim
+target_link_libraries(CPPEstSim
         Qt5::Core
         Qt5::Network
         Qt5::Widgets
